@@ -60,5 +60,43 @@ The script uses AWS SDK v1 for Go, which is in maintenance mode but still suppor
 #### Security
 IAM role and policies are created programmatically. No manual JSON policy files are required.
 
+## Verification Script
+
+### verify_replication_extended.go
+
+This Go file verifies that cross-region replication is working as expected:
+
+1. **Parse Flags**: Reads command-line arguments for source/destination bucket names, regions, AWS profile, and the object key to use for testing.
+2. **Create AWS Sessions**: Initializes AWS SDK sessions for both source and destination regions.
+3. **Upload Test Object**: Uploads a test object to the source bucket using the provided key.
+4. **Wait for Replication**: Periodically checks the destination bucket for the replicated object, waiting up to 2 minutes.
+5. **List Objects**: Lists all objects in both source and destination buckets for comparison.
+6. **Compare Object Counts**: Compares the number of objects in both buckets and reports replication status.
+
+#### Key Functions
+- `listObjects`: Lists all object keys in a given bucket using paginated requests.
+
+#### Usage
+```bash
+go run verify_replication_extended.go \
+  --source-bucket <source-bucket-name> \
+  --source-region <source-region> \
+  --dest-bucket <destination-bucket-name> \
+  --dest-region <destination-region> \
+  --key <test-object-key>
+```
+
+### Example
+```bash
+go run verify_replication_extended.go \
+  --source-bucket my-src-bucket-123456 \
+  --source-region us-east-1 \
+  --dest-bucket my-dest-bucket-98765 \
+  --dest-region us-west-2 \
+  --key replication-test-2.txt
+```
+
+This script helps confirm that objects uploaded to the source bucket are successfully replicated to the destination bucket and provides a summary of objects in both buckets.
+
 ## License
 MIT
