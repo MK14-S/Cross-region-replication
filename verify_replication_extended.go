@@ -19,7 +19,7 @@ func main() {
 	dstBucket := flag.String("dest-bucket", "", "Destination bucket name (required)")
 	dstRegion := flag.String("dest-region", "us-west-2", "Destination bucket region")
 	profile := flag.String("profile", "", "AWS profile to use (optional)")
-	key := flag.String("key", "replication-test-2.txt", "Object key to use for verification")
+	key := flag.String("key", "replication-test-1.txt", "Object key to use for verification")
 	flag.Parse()
 
 	if *srcBucket == "" || *dstBucket == "" {
@@ -42,7 +42,7 @@ func main() {
 	s3Dst := s3.New(dstSess)
 
 	// Step 1: Upload to source bucket
-	content := []byte("Hello extended replication test from Go SDK v1. Hello to CRR!")
+	content := []byte("Hello extended replication test from Go SDK v1. Hello to CRR! Bye.")
 	_, err := s3Src.PutObject(&s3.PutObjectInput{
 		Bucket: aws.String(*srcBucket),
 		Key:    key,

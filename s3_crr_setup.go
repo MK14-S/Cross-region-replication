@@ -258,7 +258,6 @@ func putReplicationConfiguration(s3client *s3.S3, srcBucket, dstBucket, roleArn 
 		DeleteMarkerReplication: &s3.DeleteMarkerReplication{
 			Status: aws.String("Disabled"),
 		},
-		// SourceSelectionCriteria can be set for replica ownership etc. Not set here.
 	}
 
 	configuration := &s3.ReplicationConfiguration{
