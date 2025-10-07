@@ -162,6 +162,7 @@ func ensureReplicationRole(iamSvc *iam.IAM, roleName, srcBucket, dstBucket, dstR
 		AssumeRolePolicyDocument: aws.String(string(assumePolicyBytes)),
 		Description:              aws.String("Role for S3 cross-region replication"),
 	})
+	var roleArn string
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok {
 			// If role already exists, retrieve it
@@ -171,13 +172,16 @@ func ensureReplicationRole(iamSvc *iam.IAM, roleName, srcBucket, dstBucket, dstR
 				if gerr != nil {
 					return "", fmt.Errorf("role exists but failed to get role: %w", gerr)
 				}
-				return aws.StringValue(out.Role.Arn), nil
+				roleArn = aws.StringValue(out.Role.Arn)
+			} else {
+				return "", fmt.Errorf("CreateRole error: %w", err)
 			}
+		} else {
+			return "", fmt.Errorf("CreateRole error: %w", err)
 		}
-		return "", fmt.Errorf("CreateRole error: %w", err)
+	} else {
+		roleArn = aws.StringValue(createRoleOutput.Role.Arn)
 	}
-
-	roleArn := aws.StringValue(createRoleOutput.Role.Arn)
 
 	// Attach inline policy that allows S3 to replicate from source to destination.
 	// Policy gives S3 permissions to read the source object versions and write to destination bucket.
@@ -220,9 +224,11 @@ func ensureReplicationRole(iamSvc *iam.IAM, roleName, srcBucket, dstBucket, dstR
 	}
 
 	policyBytes, _ := json.Marshal(policy)
+	// Create a unique policy name for each src/dest bucket pair
+	policyName := fmt.Sprintf("%s-replication-%s-to-%s", roleName, srcBucket, dstBucket)
 	_, err = iamSvc.PutRolePolicy(&iam.PutRolePolicyInput{
 		RoleName:       aws.String(roleName),
-		PolicyName:     aws.String(roleName + "-inline-policy"),
+		PolicyName:     aws.String(policyName),
 		PolicyDocument: aws.String(string(policyBytes)),
 	})
 	if err != nil {
@@ -247,25 +253,70 @@ func putReplicationConfiguration(s3client *s3.S3, srcBucket, dstBucket, roleArn 
 		// StorageClass: aws.String("STANDARD"), // optional; can set to reduced_redundancy etc.
 	}
 
-	rule := &s3.ReplicationRule{
-		ID:       aws.String("replicate-all-rule"),
-		Status:   aws.String("Enabled"),
-		Priority: aws.Int64(1),
-		Filter: &s3.ReplicationRuleFilter{
-			Prefix: aws.String(""), // replicate all objects
-		},
-		Destination: destination,
-		DeleteMarkerReplication: &s3.DeleteMarkerReplication{
-			Status: aws.String("Disabled"),
-		},
+	// Get existing replication configuration
+	var existingRules []*s3.ReplicationRule
+	getOut, err := s3client.GetBucketReplication(&s3.GetBucketReplicationInput{
+		Bucket: aws.String(srcBucket),
+	})
+	if err == nil && getOut.ReplicationConfiguration != nil {
+		existingRules = getOut.ReplicationConfiguration.Rules
+	}
+
+	// Check if a rule for this destination bucket already exists
+	ruleID := fmt.Sprintf("replicate-to-%s", dstBucket)
+	updated := false
+	maxPriority := int64(0)
+	for _, r := range existingRules {
+		if r.Priority != nil && *r.Priority > maxPriority {
+			maxPriority = *r.Priority
+		}
+	}
+	for i, r := range existingRules {
+		if r.Destination != nil && r.Destination.Bucket != nil && destination.Bucket != nil && *r.Destination.Bucket == *destination.Bucket {
+			// Update existing rule, keep its priority
+			priority := r.Priority
+			if priority == nil {
+				priority = aws.Int64(maxPriority + 1)
+			}
+			existingRules[i] = &s3.ReplicationRule{
+				ID:       aws.String(ruleID),
+				Status:   aws.String("Enabled"),
+				Priority: priority,
+				Filter: &s3.ReplicationRuleFilter{
+					Prefix: aws.String(""),
+				},
+				Destination: destination,
+				DeleteMarkerReplication: &s3.DeleteMarkerReplication{
+					Status: aws.String("Disabled"),
+				},
+			}
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		// Add new rule for this destination bucket with unique priority
+		newRule := &s3.ReplicationRule{
+			ID:       aws.String(ruleID),
+			Status:   aws.String("Enabled"),
+			Priority: aws.Int64(maxPriority + 1),
+			Filter: &s3.ReplicationRuleFilter{
+				Prefix: aws.String(""),
+			},
+			Destination: destination,
+			DeleteMarkerReplication: &s3.DeleteMarkerReplication{
+				Status: aws.String("Disabled"),
+			},
+		}
+		existingRules = append(existingRules, newRule)
 	}
 
 	configuration := &s3.ReplicationConfiguration{
 		Role:  aws.String(roleArn),
-		Rules: []*s3.ReplicationRule{rule},
+		Rules: existingRules,
 	}
 
-	_, err := s3client.PutBucketReplication(&s3.PutBucketReplicationInput{
+	_, err = s3client.PutBucketReplication(&s3.PutBucketReplicationInput{
 		Bucket:                   aws.String(srcBucket),
 		ReplicationConfiguration: configuration,
 	})
